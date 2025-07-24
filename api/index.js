@@ -1,23 +1,34 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const serverless = require('serverless-http'); // For Vercel compatibility
+const serverless = require('serverless-http');
 
+// Initialize Express
 const app = express();
 
-// Search endpoint
+// Enable CORS (optional but recommended)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
+
+// Search Endpoint
 app.get('/api/search', async (req, res) => {
-  const query = req.query.q;
-  if (!query) return res.status(400).json({ error: 'Missing search query (q)' });
-
   try {
-    const url = `https://hentaigasm.com/?s=${encodeURIComponent(query)}`;
-    const { data } = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
-    });
-    const $ = cheerio.load(data);
+    const query = req.query.q;
+    if (!query) throw new Error('Missing search query');
 
+    const searchUrl = `https://hentaigasm.com/?s=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(searchUrl, {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    const $ = cheerio.load(data);
     const results = [];
+
     $('.item-post').each((i, el) => {
       results.push({
         title: $(el).find('h2.title a').text().trim(),
@@ -30,44 +41,56 @@ app.get('/api/search', async (req, res) => {
       });
     });
 
-    res.json({ status: true, total: results.length, results });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch data', details: err.message });
+    res.json({ status: true, results });
+    
+  } catch (error) {
+    res.status(400).json({ 
+      status: false,
+      error: error.message 
+    });
   }
 });
 
-// Video details endpoint
+// Video Details Endpoint
 app.get('/api/video', async (req, res) => {
-  const url = req.query.url;
-  if (!url) return res.status(400).json({ error: 'Missing video URL (url)' });
-
   try {
-    const { data } = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+    const videoUrl = req.query.url;
+    if (!videoUrl) throw new Error('Missing video URL');
+
+    const { data } = await axios.get(videoUrl, {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
     });
+
     const $ = cheerio.load(data);
+    const result = {
+      title: $('h1.title').text().trim(),
+      description: $('.entry-content p').first().text().trim(),
+      tags: $('.tags a').map((i, el) => $(el).text().trim()).get(),
+      downloadLinks: $('.download-links a').map((i, el) => ({
+        quality: $(el).text().trim(),
+        link: $(el).attr('href')
+      })).get(),
+      embeddedVideo: $('iframe').attr('src') || null
+    };
 
-    const title = $('h1.title').text().trim();
-    const description = $('.entry-content p').first().text().trim();
-    const tags = $('.tags a').map((i, el) => $(el).text().trim()).get();
-    const downloadLinks = $('.download-links a').map((i, el) => ({
-      quality: $(el).text().trim(),
-      link: $(el).attr('href')
-    })).get();
-    const embeddedVideo = $('iframe').attr('src') || null;
-    const pinkButtonLinks = $('.btn.btn-pink').map((i, el) => ({
-      title: $(el).attr('href').split('/').pop().split('.')[0],
-      url: $(el).attr('href')
-    })).get();
-
-    res.json({
-      status: true,
-      data: { title, description, tags, downloadLinks, embeddedVideo, pinkButtonLinks }
+    res.json({ status: true, data: result });
+    
+  } catch (error) {
+    res.status(400).json({ 
+      status: false,
+      error: error.message 
     });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch video data', details: err.message });
   }
 });
 
-// Export for Vercel
+// Error handler (optional)
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Vercel-compatible export
+module.exports = app;
 module.exports.handler = serverless(app);
